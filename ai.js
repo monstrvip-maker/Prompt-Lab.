@@ -1,110 +1,68 @@
-import { CreateMLCEngine } from "@mlc-ai/web-llm";
+import { pipeline, env } from "@huggingface/transformers";
 
-let engine = null;
+let generator = null;
 let loading = null;
+env.allowLocalModels = false;
+env.useBrowserCache = true;
 
-function withTimeout(promise, ms, message) {
-  let timer;
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })
-  ]).finally(() => clearTimeout(timer));
+function extractText(result) {
+  const value = result?.[0]?.generated_text ?? result?.generated_text ?? "";
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    const last = value[value.length - 1];
+    return typeof last?.content === "string" ? last.content : JSON.stringify(last);
+  }
+  return String(value || "");
 }
-
+function parseJson(text) {
+  const clean = text.replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+  const start = clean.indexOf("{");
+  const end = clean.lastIndexOf("}");
+  if (start < 0 || end <= start) throw new Error("Модель вернула ответ без JSON. Повтори запрос.");
+  return JSON.parse(clean.slice(start, end + 1));
+}
+function promptFor(system, user) {
+  return "<|im_start|>system\n" + system + "<|im_end|>\n<|im_start|>user\n" + user + "<|im_end|>\n<|im_start|>assistant\n";
+}
+const generationRules = "Ты — эксперт по prompt engineering. Понимай цель пользователя, не склеивай ответы в шаблон. Если критически не хватает информации, задай до 3 конкретных вопросов и верни JSON {\"status\":\"questions\",\"questions\":[...],\"final_prompt\":\"\"}. Иначе составь профессиональный промт с ролью, целью, контекстом, входными данными, шагами, ограничениями, критериями качества и форматом результата. Применяй полезные техники и подтверждённые знания библиотеки. Не выдумывай факты. Верни только JSON {\"status\":\"prompt\",\"questions\":[],\"final_prompt\":\"готовый промт\",\"rationale\":\"почему так построен\",\"techniques\":[...],\"used_knowledge\":число}.";
+const analysisRules = "Ты — эксперт по анализу промтов. Анализируй смысл, назначение, структуру, техники, сильные и слабые стороны. Извлекай только переносимые правила, не сохраняй частные сведения из исходного текста. Верни только JSON: {\"summary\":\"...\",\"elements\":[{\"name\":\"...\",\"description\":\"...\"}],\"techniques\":[{\"name\":\"...\",\"why\":\"...\"}],\"strengths\":[\"...\"],\"weaknesses\":[\"...\"],\"reusable_rules\":[\"...\"],\"improved_prompt\":\"...\"}.";
 export function initLocalAI() {
-  return {
-    isReady: () => !!engine,
-    load: async (modelId, onProgress = () => {}) => {
-      if (engine && engine.modelId === modelId) return engine;
-      if (loading) return loading;
-
-      onProgress({ text: "Проверка поддержки WebGPU в браузере…", progress: 0 });
-      if (!navigator.gpu) {
-        throw new Error("Этот браузер не предоставляет WebGPU. Сейчас приложение открыто не в поддерживаемом режиме. Открой ссылку в последней версии Google Chrome для Android.");
+ return {
+  isReady:()=>!!generator,
+  load:async(modelId,onProgress=()=>{})=>{
+   if(generator)return generator;
+   if(loading)return loading;
+   loading=(async()=>{
+    onProgress({text:"Подготовка локального ИИ на процессоре (без WebGPU)…",progress:0});
+    onProgress({text:"Загрузка Qwen 0.5B из хранилища модели…",progress:1});
+    const pipe=await pipeline("text-generation","onnx-community/Qwen2.5-0.5B-Instruct",{
+      device:"wasm",
+      dtype:"q4",
+      progress_callback:(p)=>{
+       const total=Number(p.total)||0, loaded=Number(p.loaded)||0;
+       const percent=total>0?Math.max(1,Math.min(99,Math.round(loaded/total*100))):0;
+       const file=p.file?String(p.file).split("/").pop():"файлы модели";
+       const status=p.status==="progress"?"Загрузка "+file+"…":p.status==="done"?"Подготовлен "+file:p.status==="ready"?"Модель готова":("Подготовка "+file+"…");
+       onProgress({text:status,progress:percent});
       }
-
-      onProgress({ text: "Запрос графического адаптера WebGPU…", progress: 0 });
-      const adapter = await withTimeout(navigator.gpu.requestAdapter(), 15000, "WebGPU не ответил за 15 секунд. Вкладка или графический драйвер могли зависнуть. Перезагрузи страницу и повтори.");
-      if (!adapter) {
-        throw new Error("WebGPU найден, но графический адаптер недоступен. Попробуй Google Chrome, отключи энергосбережение и закрой другие тяжёлые приложения.");
-      }
-
-      let adapterName = "графический адаптер найден";
-      try {
-        const info = await adapter.requestAdapterInfo?.();
-        if (info?.description || info?.device) adapterName = [info.description, info.device].filter(Boolean).join(" ");
-      } catch {}
-      onProgress({ text: "WebGPU найден (" + adapterName + "). Проверка графического устройства…", progress: 0 });
-      const testDevice = await withTimeout(adapter.requestDevice(), 15000, "WebGPU-адаптер найден, но графическое устройство не создаётся. Возможна несовместимость драйвера.");
-      testDevice.destroy();
-      onProgress({ text: "Графическое устройство работает. Инициализация движка ИИ…", progress: 0 });
-
-      loading = (async () => {
-        engine = null;
-        const next = await withTimeout(CreateMLCEngine(modelId, {
-          initProgressCallback: (p) => onProgress({
-            text: p.text || "Загрузка и подготовка модели…",
-            progress: Math.round((p.progress || 0) * 100)
-          })
-        }), 120000, "Движок WebLLM не завершил инициализацию за 2 минуты. WebGPU доступен, но этот браузер или графический драйвер может быть несовместим с WebLLM на Android.");
-        next.modelId = modelId;
-        engine = next;
-        return engine;
-      })();
-      try {
-        return await loading;
-      } catch (error) {
-        const message = error?.message || String(error);
-        if (/device lost|VK_ERROR_DEVICE_LOST|GPUDeviceLost/i.test(message)) {
-          throw new Error("Браузер потерял доступ к GPU во время запуска модели. Попробуй Google Chrome, отключи энергосбережение и перезагрузи страницу. " + message);
-        }
-        throw error;
-      } finally {
-        loading = null;
-      }
-    },
-
-    generate: async (input) => {
-      if (!engine) throw new Error("Сначала загрузи модель.");
-      const knowledge = (input.knowledge || []).slice(0, 25).map((x, i) => (i + 1) + ". " + x).join("\\n");
-      const userText = [
-        "ЗАДАЧА ПОЛЬЗОВАТЕЛЯ:", input.task,
-        "ДОПОЛНИТЕЛЬНЫЕ ПОЛЯ:",
-        "Роль: " + (input.role || "не задана"),
-        "Контекст: " + (input.context || "не задан"),
-        "Ограничения: " + (input.limits || "не заданы"),
-        "Желаемый формат: " + (input.format || "выбери сам"),
-        "Ответы на уточнения: " + (input.clarifications || "пока нет"),
-        "ПОДТВЕРЖДЁННЫЕ ЗНАНИЯ ИЗ БИБЛИОТЕКИ:", knowledge || "пока нет"
-      ].join("\\n");
-      const response = await engine.chat.completions.create({
-        messages: [
-          { role: "system", content: "Ты — эксперт по prompt engineering и архитектор задач. Не превращай ответы пользователя в шаблон и не копируй их механически. Пойми конечную цель, определи тип задачи и выбери подходящие техники (декомпозиция, few-shot, ограничения, критерии приёмки, формат вывода, проверка фактов, роль и контекст) только если они полезны. Если критически не хватает информации, задай максимум 3 конкретных уточняющих вопроса и пока НЕ создавай финальный промт. Если информации достаточно, создай профессиональный, детальный, готовый к копированию промт: роль, цель, контекст, входные данные, последовательность работы, ограничения, критерии качества и формат результата. Не добавляй вымышленные факты. Используй знания библиотеки уместно. Верни только валидный JSON без Markdown с полями status (questions или prompt), questions (массив), final_prompt, rationale, techniques (массив), used_knowledge (число)." },
-          { role: "user", content: userText }
-        ],
-        temperature: 0.35,
-        max_tokens: 1400,
-        response_format: { type: "json_object" }
-      });
-      const text = response.choices?.[0]?.message?.content || "";
-      try { return JSON.parse(text.replace(/^\\s*```json/i, "").replace(/```\\s*$/, "")); }
-      catch { return { status: "prompt", final_prompt: text, used_knowledge: 0 }; }
-    },
-
-    analyze: async (prompt) => {
-      if (!engine) throw new Error("Сначала загрузи модель.");
-      const response = await engine.chat.completions.create({
-        messages: [
-          { role: "system", content: "Ты — эксперт по анализу промтов. Проанализируй данный промт по смыслу, а не только по ключевым словам. Выяви назначение, структуру, техники, сильные и слабые стороны. Извлекай только переносимые правила, которые могут помочь в других задачах; не сохраняй содержание, специфичное только для этого промта. Предложи улучшенную версию. Верни только валидный JSON без Markdown с полями summary, elements (массив объектов name и description), techniques (массив объектов name и why), strengths (массив строк), weaknesses (массив строк), reusable_rules (массив строк), improved_prompt. Не выдумывай отсутствующие элементы." },
-          { role: "user", content: "Проанализируй этот промт:\\n\\n" + prompt }
-        ],
-        temperature: 0.2,
-        max_tokens: 1500,
-        response_format: { type: "json_object" }
-      });
-      const text = response.choices?.[0]?.message?.content || "{}";
-      try { return JSON.parse(text.replace(/^\\s*```json/i, "").replace(/```\\s*$/, "")); }
-      catch { throw new Error("Не удалось разобрать ответ модели. Попробуй повторить анализ."); }
-    }
-  };
+    });
+    generator=pipe;
+    onProgress({text:"Локальная модель Qwen 0.5B готова на процессоре",progress:100});
+    return generator;
+   })();
+   try{return await loading;}finally{loading=null;}
+  },
+  generate:async(input)=>{
+   if(!generator)throw new Error("Сначала загрузи локальную модель.");
+   const knowledge=(input.knowledge||[]).slice(0,20).map((x,i)=>(i+1)+". "+x).join("\n");
+   const user=["ЗАДАЧА:",input.task,"Роль: "+(input.role||"определи сам"),"Контекст: "+(input.context||"не указан"),"Ограничения: "+(input.limits||"определи необходимые"),"Формат: "+(input.format||"выбери подходящий"),"Ответы на уточнения: "+(input.clarifications||"нет"),"ПОДТВЕРЖДЁННЫЕ ЗНАНИЯ:",knowledge||"пока нет"].join("\n");
+   const result=await generator(promptFor(generationRules,user),{max_new_tokens:1100,do_sample:false,return_full_text:false});
+   return parseJson(extractText(result));
+  },
+  analyze:async(prompt)=>{
+   if(!generator)throw new Error("Сначала загрузи локальную модель.");
+   const result=await generator(promptFor(analysisRules,"Проанализируй этот промт:\n"+prompt),{max_new_tokens:1100,do_sample:false,return_full_text:false});
+   return parseJson(extractText(result));
+  }
+ };
 }
