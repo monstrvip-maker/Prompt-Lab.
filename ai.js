@@ -3,8 +3,12 @@ import { CreateMLCEngine } from "@mlc-ai/web-llm";
 let engine = null;
 let loading = null;
 
-function wait(ms) {
-  return new Promise((_, reject) => setTimeout(() => reject(new Error("Тайм-аут проверки WebGPU: браузер не ответил за 15 секунд. Открой Prompt Lab в Google Chrome и повтори попытку.")), ms));
+function withTimeout(promise, ms, message) {
+  let timer;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(message)), ms); })
+  ]).finally(() => clearTimeout(timer));
 }
 
 export function initLocalAI() {
@@ -20,7 +24,7 @@ export function initLocalAI() {
       }
 
       onProgress({ text: "Запрос графического адаптера WebGPU…", progress: 0 });
-      const adapter = await Promise.race([navigator.gpu.requestAdapter(), wait(15000)]);
+      const adapter = await withTimeout(navigator.gpu.requestAdapter(), 15000, "WebGPU не ответил за 15 секунд. Вкладка или графический драйвер могли зависнуть. Перезагрузи страницу и повтори.");
       if (!adapter) {
         throw new Error("WebGPU найден, но графический адаптер недоступен. Попробуй Google Chrome, отключи энергосбережение и закрой другие тяжёлые приложения.");
       }
@@ -30,16 +34,19 @@ export function initLocalAI() {
         const info = await adapter.requestAdapterInfo?.();
         if (info?.description || info?.device) adapterName = [info.description, info.device].filter(Boolean).join(" ");
       } catch {}
-      onProgress({ text: "WebGPU готов (" + adapterName + "). Запуск движка ИИ…", progress: 0 });
+      onProgress({ text: "WebGPU найден (" + adapterName + "). Проверка графического устройства…", progress: 0 });
+      const testDevice = await withTimeout(adapter.requestDevice(), 15000, "WebGPU-адаптер найден, но графическое устройство не создаётся. Возможна несовместимость драйвера.");
+      testDevice.destroy();
+      onProgress({ text: "Графическое устройство работает. Инициализация движка ИИ…", progress: 0 });
 
       loading = (async () => {
         engine = null;
-        const next = await CreateMLCEngine(modelId, {
+        const next = await withTimeout(CreateMLCEngine(modelId, {
           initProgressCallback: (p) => onProgress({
             text: p.text || "Загрузка и подготовка модели…",
             progress: Math.round((p.progress || 0) * 100)
           })
-        });
+        }), 120000, "Движок WebLLM не завершил инициализацию за 2 минуты. WebGPU доступен, но этот браузер или графический драйвер может быть несовместим с WebLLM на Android.");
         next.modelId = modelId;
         engine = next;
         return engine;
