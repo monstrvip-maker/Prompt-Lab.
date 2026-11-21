@@ -46,7 +46,8 @@ export function initLocalAI() {
           { role: "user", content: userText }
         ],
         temperature: 0.35,
-        max_tokens: 1400
+        max_tokens: 1400,
+        response_format: { type: "json_object" }
       });
       const text = response.choices?.[0]?.message?.content || "";
       try {
@@ -64,7 +65,8 @@ export function initLocalAI() {
           { role: "user", content: "Проанализируй этот промт:\n\n" + prompt }
         ],
         temperature: 0.2,
-        max_tokens: 1500
+        max_tokens: 1500,
+        response_format: { type: "json_object" }
       });
       const text = response.choices?.[0]?.message?.content || "{}";
       try {
