@@ -22,9 +22,7 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        env:
-          ONNXRUNTIME_NODE_INSTALL: skip
-        run: npm install
+        run: npm install --onnxruntime-node-install-cuda=skip
       - name: Build application
         run: npm run build
       - name: Configure Pages
