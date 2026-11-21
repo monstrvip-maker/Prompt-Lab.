@@ -1,3 +1,3 @@
-import { initLocalAI } from "./ai.js?v=promptlab-ai-v6";
+import { initLocalAI } from "./ai.js?v=promptlab-ai-v7";
 window.promptLabAI = initLocalAI();
-import("./app.js?v=promptlab-app-v6");
+import("./app.js?v=promptlab-app-v7");
