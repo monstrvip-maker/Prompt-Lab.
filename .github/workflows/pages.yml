@@ -22,7 +22,9 @@ jobs:
         with:
           node-version: 22
       - name: Install dependencies
-        run: npm install --onnxruntime-node-install=skip
+        env:
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: npm install
       - name: Build application
         run: npm run build
       - name: Configure Pages
