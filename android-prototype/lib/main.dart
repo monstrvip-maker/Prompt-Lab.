@@ -46,6 +46,75 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
   bool _busy = false;
   LocalLlmEngine? _engine;
   LlmSession? _session;
+  bool _modelFileExists = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreModelOnStartup();
+  }
+
+  Future<void> _restoreModelOnStartup() async {
+    setState(() {
+      _busy = true;
+      _status = 'Проверяю сохранённую модель';
+      _detail = 'Ищу модель в памяти телефона. Повторное скачивание не требуется.';
+    });
+    try {
+      final path = await _modelPath();
+      final file = File(path);
+      if (!await file.exists() || await file.length() < 1024 * 1024) {
+        if (!mounted) return;
+        setState(() {
+          _modelFileExists = false;
+          _status = 'Модель ещё не скачана';
+          _detail = 'Нажми кнопку ниже, чтобы скачать её один раз.';
+        });
+        return;
+      }
+      if (!mounted) return;
+      setState(() {
+        _modelFileExists = true;
+        _progress = 1;
+        _status = 'Модель найдена на телефоне';
+        _detail = 'Запускаю сохранённую модель. Интернет для этого не нужен.';
+      });
+      await _initializeEngine(path);
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _status = 'Не удалось восстановить модель';
+        _detail = error.toString();
+      });
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _initializeEngine(String path) async {
+    if (!mounted) return;
+    setState(() {
+      _status = 'Запуск локального ИИ';
+      _detail = 'Загружаю сохранённую модель в оперативную память телефона.';
+    });
+    _engine = await LocalLlmEngine.loadModel(
+      modelPath: path,
+      params: const ModelParams(
+        contextSize: 1024,
+        gpuLayers: 0,
+      ),
+    );
+    _session = _engine!.createSession(
+      defaultTemplate: const ChatMlTemplate(),
+    );
+    if (!mounted) return;
+    setState(() {
+      _modelFileExists = true;
+      _status = 'Модель готова';
+      _detail = 'ИИ готов к работе. Файл модели сохранён на телефоне.';
+      _progress = 1;
+    });
+  }
 
   Future<String> _modelPath() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -61,14 +130,16 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
     setState(() {
       _busy = true;
       _progress = 0;
-      _status = 'Подготовка загрузки';
-      _detail = 'Загружаем тестовую модель на устройство.';
+      _status = _modelFileExists ? 'Повторный запуск ИИ' : 'Подготовка загрузки';
+      _detail = _modelFileExists
+          ? 'Запускаю модель из памяти телефона.'
+          : 'Скачиваем модель на телефон. Это потребуется только один раз.';
     });
 
     try {
       final path = await _modelPath();
       final file = File(path);
-      if (!await file.exists() || await file.length() == 0) {
+      if (!await file.exists() || await file.length() < 1024 * 1024) {
         // Use a direct HTTP download instead of relying on the package stream
         // to emit a terminal status event. Some plugin versions close the
         // stream without sending DownloadStatus.completed.
@@ -153,29 +224,7 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
         });
       }
 
-      if (!mounted) return;
-      setState(() {
-        _status = 'Запуск локального движка';
-        _detail = 'Проверяем запуск на CPU, без облака и без GPU-ускорения.';
-      });
-
-      _engine = await LocalLlmEngine.loadModel(
-        modelPath: path,
-        params: const ModelParams(
-          contextSize: 1024,
-          gpuLayers: 0,
-        ),
-      );
-      _session = _engine!.createSession(
-        defaultTemplate: const ChatMlTemplate(),
-      );
-
-      if (!mounted) return;
-      setState(() {
-        _status = 'Модель готова';
-        _detail = 'Локальная модель загружена. Можно отправить тестовый запрос.';
-        _progress = 1;
-      });
+      await _initializeEngine(path);
     } catch (error) {
       if (!mounted) return;
       setState(() {
