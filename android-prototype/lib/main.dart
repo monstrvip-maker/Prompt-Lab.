@@ -69,58 +69,84 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
       final path = await _modelPath();
       final file = File(path);
       if (!await file.exists() || await file.length() == 0) {
-        final parent = file.parent;
-        if (!await parent.exists()) {
-          await parent.create(recursive: true);
+        // Use a direct HTTP download instead of relying on the package stream
+        // to emit a terminal status event. Some plugin versions close the
+        // stream without sending DownloadStatus.completed.
+        final tempFile = File('$path.part');
+        if (await tempFile.exists()) {
+          await tempFile.delete();
         }
-        final downloader = ModelDownloader();
-        final finished = Completer<void>();
-        final subscription = downloader.download(
-          url: modelUrl,
-          destinationPath: path,
-          allowResume: true,
-        ).listen(
-          (item) {
+        final client = HttpClient()
+          ..connectionTimeout = const Duration(seconds: 30)
+          ..idleTimeout = const Duration(seconds: 60);
+        IOSink? sink;
+        try {
+          final request = await client.getUrl(Uri.parse(modelUrl));
+          request.headers.set(HttpHeaders.acceptEncodingHeader, 'identity');
+          final response = await request.close();
+          if (response.statusCode != HttpStatus.ok) {
+            throw HttpException(
+              'Сервер вернул HTTP ${response.statusCode}',
+              uri: response.redirects.isNotEmpty
+                  ? response.redirects.last.location
+                  : Uri.parse(modelUrl),
+            );
+          }
+          final totalBytes = response.contentLength;
+          sink = tempFile.openWrite();
+          var receivedBytes = 0;
+          setState(() {
+            _status = 'Загрузка модели';
+            _detail = totalBytes > 0
+                ? '0% · Подключение установлено'
+                : 'Подключение установлено';
+          });
+
+          await for (final chunk in response) {
+            sink.add(chunk);
+            receivedBytes += chunk.length;
             if (!mounted) return;
             setState(() {
-              _progress = item.progress.clamp(0.0, 1.0).toDouble();
-              _status = item.status == DownloadStatus.completed
-                  ? 'Загрузка завершена'
-                  : 'Загрузка модели';
-              _detail =
-                  '${(_progress * 100).toStringAsFixed(0)}% · ${item.speedFormatted}';
+              _progress = totalBytes > 0
+                  ? (receivedBytes / totalBytes).clamp(0.0, 1.0).toDouble()
+                  : 0;
+              _status = 'Загрузка модели';
+              _detail = totalBytes > 0
+                  ? '${(_progress * 100).toStringAsFixed(0)}% · ${(receivedBytes / (1024 * 1024)).toStringAsFixed(1)} МБ'
+                  : '${(receivedBytes / (1024 * 1024)).toStringAsFixed(1)} МБ загружено';
             });
-            if (item.status == DownloadStatus.completed && !finished.isCompleted) {
-              finished.complete();
-            }
-          },
-          onError: (Object error, StackTrace stack) {
-            if (!finished.isCompleted) finished.completeError(error, stack);
-          },
-          onDone: () {
-            if (!finished.isCompleted) {
-              finished.completeError(
-                StateError('Загрузчик завершил поток без статуса completed.'),
-              );
-            }
-          },
-        );
-        try {
-          await finished.future.timeout(const Duration(minutes: 30));
+          }
+
+          await sink.flush();
+          await sink.close();
+          sink = null;
+
+          final actualBytes = await tempFile.length();
+          if (actualBytes < 1024 * 1024) {
+            throw FileSystemException(
+              'Скачанный файл слишком мал ($actualBytes байт). Сервер мог вернуть HTML вместо модели.',
+              tempFile.path,
+            );
+          }
+          if (totalBytes > 0 && actualBytes != totalBytes) {
+            throw FileSystemException(
+              'Загрузка неполная: получено $actualBytes из $totalBytes байт.',
+              tempFile.path,
+            );
+          }
+          if (await file.exists()) {
+            await file.delete();
+          }
+          await tempFile.rename(path);
+        } catch (_) {
+          if (sink != null) {
+            await sink.close();
+          }
+          rethrow;
         } finally {
-          await subscription.cancel();
+          client.close(force: true);
         }
-        if (!await file.exists()) {
-          throw FileSystemException('Загрузчик сообщил об окончании, но файл не найден', path);
-        }
-        final downloadedBytes = await file.length();
-        if (downloadedBytes < 1024 * 1024) {
-          throw FileSystemException(
-            'Файл модели слишком мал: $downloadedBytes байт. Возможно, сервер вернул страницу ошибки.',
-            path,
-          );
-        }
-      } else {
+      }} else {
         setState(() {
           _progress = 1;
           _status = 'Модель уже загружена';
