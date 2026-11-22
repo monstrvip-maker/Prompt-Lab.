@@ -1,0 +1,42 @@
+name: Android local engine prototype
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - android-local-engine-prototype
+    paths:
+      - 'android-prototype/**'
+      - '.github/workflows/android-engine-prototype.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.50.0'
+          channel: stable
+      - name: Create Android Flutter scaffold
+        run: flutter create --platforms=android --project-name prompt_lab_engine_test /tmp/prompt_lab_engine_test
+      - name: Copy prototype source
+        run: |
+          cp android-prototype/pubspec.yaml /tmp/prompt_lab_engine_test/pubspec.yaml
+          rm -rf /tmp/prompt_lab_engine_test/lib
+          cp -R android-prototype/lib /tmp/prompt_lab_engine_test/lib
+      - name: Add internet permission
+        run: |
+          sed -i 's#<manifest xmlns:android="http://schemas.android.com/apk/res/android">#<manifest xmlns:android="http://schemas.android.com/apk/res/android">\n    <uses-permission android:name="android.permission.INTERNET"/>#' /tmp/prompt_lab_engine_test/android/app/src/main/AndroidManifest.xml
+      - name: Resolve dependencies
+        working-directory: /tmp/prompt_lab_engine_test
+        run: flutter pub get
+      - name: Build debug APK
+        working-directory: /tmp/prompt_lab_engine_test
+        run: flutter build apk --debug
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: prompt-lab-android-engine-test
+          path: /tmp/prompt_lab_engine_test/build/app/outputs/flutter-apk/app-debug.apk
+          retention-days: 14
