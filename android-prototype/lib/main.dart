@@ -35,7 +35,7 @@ class EngineTestScreen extends StatefulWidget {
 
 class _EngineTestScreenState extends State<EngineTestScreen> {
   static const modelUrl =
-      'https://huggingface.co/tensorblock/SmolLM-135M-Instruct-GGUF/resolve/main/SmolLM-135M-Instruct-Q2_K.gguf';
+      'https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf';
 
   final _input = TextEditingController(text: 'Привет! Кратко расскажи, что ты умеешь.');
   final _output = StringBuffer();
@@ -121,7 +121,7 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
     if (!await modelsDir.exists()) {
       await modelsDir.create(recursive: true);
     }
-    return '${modelsDir.path}/SmolLM-135M-Instruct-Q2_K.gguf';
+    return '${modelsDir.path}/qwen2.5-0.5b-instruct-q4_k_m.gguf';
   }
 
   Future<void> _downloadAndLoad() async {
@@ -251,14 +251,14 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
       final stream = session.chat(
         [
           ChatMessage.system(
-            'Ты — локальный тестовый помощник Prompt Lab. Отвечай кратко и понятно на русском языке.',
+            'Ты — помощник Prompt Lab. Всегда отвечай на русском языке, если пользователь пишет по-русски. Не используй английский без просьбы пользователя. Выполняй запрос пользователя точно, не повторяй стандартное приветствие и не рассказывай о технической библиотеке, если об этом не спрашивают.',
           ),
           ChatMessage.user(prompt),
         ],
         params: const SamplingParams(
-          temperature: 0.7,
+          temperature: 0.35,
           topP: 0.9,
-          maxTokens: 160,
+          maxTokens: 220,
         ),
       );
 
