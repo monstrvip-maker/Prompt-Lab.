@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -75,7 +74,7 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
       if (!mounted) return;
       setState(() {
         _modelFileExists = true;
-        _progress = 1;
+        _progress = 0;
         _status = 'Модель найдена на телефоне';
         _detail = 'Запускаю сохранённую модель. Интернет для этого не нужен.';
       });
