@@ -146,7 +146,7 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
         } finally {
           client.close(force: true);
         }
-      }} else {
+      } else {
         setState(() {
           _progress = 1;
           _status = 'Модель уже загружена';
