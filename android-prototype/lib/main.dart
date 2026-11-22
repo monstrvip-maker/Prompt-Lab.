@@ -244,22 +244,23 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
       _busy = true;
       _output.clear();
       _status = 'Модель генерирует ответ';
+      _detail = 'Отправляю именно ваш текст в локальную модель.';
       _detail = 'Ответ создаётся непосредственно на устройстве.';
     });
 
     try {
+      // Match the package's published example: send the user's message
+      // directly and pass the model's ChatML template explicitly.
+      // This avoids relying on implicit session defaults while diagnosing
+      // the unexpected canned English response.
       final stream = session.chat(
-        [
-          ChatMessage.system(
-            'Ты — помощник Prompt Lab. Всегда отвечай на русском языке, если пользователь пишет по-русски. Не используй английский без просьбы пользователя. Выполняй запрос пользователя точно, не повторяй стандартное приветствие и не рассказывай о технической библиотеке, если об этом не спрашивают.',
-          ),
-          ChatMessage.user(prompt),
-        ],
+        [ChatMessage.user(prompt)],
         params: const SamplingParams(
           temperature: 0.35,
           topP: 0.9,
           maxTokens: 220,
         ),
+        template: const ChatMlTemplate(),
       );
 
       await for (final token in stream) {
