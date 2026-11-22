@@ -36,7 +36,7 @@ class EngineTestScreen extends StatefulWidget {
 
 class _EngineTestScreenState extends State<EngineTestScreen> {
   static const modelUrl =
-      'https://huggingface.co/HuggingFaceTB/SmolLM-135M-Instruct-GGUF/resolve/main/smollm-135m-instruct-q4_k_m.gguf';
+      'https://huggingface.co/tensorblock/SmolLM-135M-Instruct-GGUF/resolve/main/SmolLM-135M-Instruct-Q2_K.gguf';
 
   final _input = TextEditingController(text: 'Привет! Кратко расскажи, что ты умеешь.');
   final _output = StringBuffer();
@@ -53,7 +53,7 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
     if (!await modelsDir.exists()) {
       await modelsDir.create(recursive: true);
     }
-    return '${modelsDir.path}/smollm-135m-instruct-q4_k_m.gguf';
+    return '${modelsDir.path}/SmolLM-135M-Instruct-Q2_K.gguf';
   }
 
   Future<void> _downloadAndLoad() async {
