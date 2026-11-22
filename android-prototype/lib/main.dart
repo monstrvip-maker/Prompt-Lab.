@@ -71,7 +71,7 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
         )) {
           if (!mounted) return;
           setState(() {
-            _progress = item.progress.clamp(0.0, 1.0);
+            _progress = item.progress.clamp(0.0, 1.0).toDouble();
             _status = 'Загрузка модели';
             _detail =
                 '${(_progress * 100).toStringAsFixed(0)}% · ${item.speedFormatted}';
