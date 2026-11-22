@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -47,8 +48,12 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
   LlmSession? _session;
 
   Future<String> _modelPath() async {
-    final dir = await getApplicationSupportDirectory();
-    return '${dir.path}/smollm-135m-instruct-q4_k_m.gguf';
+    final dir = await getApplicationDocumentsDirectory();
+    final modelsDir = Directory('${dir.path}/gguf_models');
+    if (!await modelsDir.exists()) {
+      await modelsDir.create(recursive: true);
+    }
+    return '${modelsDir.path}/smollm-135m-instruct-q4_k_m.gguf';
   }
 
   Future<void> _downloadAndLoad() async {
@@ -64,18 +69,56 @@ class _EngineTestScreenState extends State<EngineTestScreen> {
       final path = await _modelPath();
       final file = File(path);
       if (!await file.exists() || await file.length() == 0) {
+        final parent = file.parent;
+        if (!await parent.exists()) {
+          await parent.create(recursive: true);
+        }
         final downloader = ModelDownloader();
-        await for (final item in downloader.download(
+        final finished = Completer<void>();
+        final subscription = downloader.download(
           url: modelUrl,
           destinationPath: path,
-        )) {
-          if (!mounted) return;
-          setState(() {
-            _progress = item.progress.clamp(0.0, 1.0).toDouble();
-            _status = 'Загрузка модели';
-            _detail =
-                '${(_progress * 100).toStringAsFixed(0)}% · ${item.speedFormatted}';
-          });
+          allowResume: true,
+        ).listen(
+          (item) {
+            if (!mounted) return;
+            setState(() {
+              _progress = item.progress.clamp(0.0, 1.0).toDouble();
+              _status = item.status == DownloadStatus.completed
+                  ? 'Загрузка завершена'
+                  : 'Загрузка модели';
+              _detail =
+                  '${(_progress * 100).toStringAsFixed(0)}% · ${item.speedFormatted}';
+            });
+            if (item.status == DownloadStatus.completed && !finished.isCompleted) {
+              finished.complete();
+            }
+          },
+          onError: (Object error, StackTrace stack) {
+            if (!finished.isCompleted) finished.completeError(error, stack);
+          },
+          onDone: () {
+            if (!finished.isCompleted) {
+              finished.completeError(
+                StateError('Загрузчик завершил поток без статуса completed.'),
+              );
+            }
+          },
+        );
+        try {
+          await finished.future.timeout(const Duration(minutes: 30));
+        } finally {
+          await subscription.cancel();
+        }
+        if (!await file.exists()) {
+          throw FileSystemException('Загрузчик сообщил об окончании, но файл не найден', path);
+        }
+        final downloadedBytes = await file.length();
+        if (downloadedBytes < 1024 * 1024) {
+          throw FileSystemException(
+            'Файл модели слишком мал: $downloadedBytes байт. Возможно, сервер вернул страницу ошибки.',
+            path,
+          );
         }
       } else {
         setState(() {
